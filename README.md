@@ -28,7 +28,7 @@ git clone https://github.com/magdielzz/Mapa-electoral-.git
 cd Mapa-electoral-
 ```
 
-3. Abra el archivo principal en su navegador web.
+3. Siga las instrucciones específicas del proyecto según los archivos disponibles.
 
 ## Uso
 
@@ -49,7 +49,7 @@ Las contribuciones son bienvenidas. Por favor, siga estos pasos:
 
 ## Licencia
 
-Este proyecto está bajo la Licencia MIT. Consulte el archivo LICENSE para más detalles.
+Información de licencia por determinar.
 
 ## Contacto
 
