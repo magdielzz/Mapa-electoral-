@@ -164,8 +164,24 @@
 
         function cargarMapa() {
             const año = document.getElementById('yearSelect').value;
-            fetch(`mexico_votacion_${año}.geojson`)
-                .then(res => res.json())
+
+            const urlsGeoJSON = {
+                2018: "https://drive.google.com/uc?export=download&id=14u3mf8LpH0CfUHc3HhcDYUH9rSHxtdEV",
+                2021: "https://drive.google.com/uc?export=download&id=1q3KnTA0SEdG7DU2MmQ-SkF0DCaXJNMOE",
+                2024: "https://drive.google.com/uc?export=download&id=1AF2pCCBKr3FWyoiFvNeHI_YgCU0Z4jdG"
+            };
+
+            const url = urlsGeoJSON[año];
+            if (!url) {
+                console.error("No hay URL configurada para el año:", año);
+                return;
+            }
+
+            fetch(url)
+                .then(res => {
+                    if (!res.ok) throw new Error("Error al descargar el archivo: " + res.statusText);
+                    return res.json();
+                })
                 .then(data => {
                     datosGeoJSON = data;
                     actualizarSelects(data.features);
@@ -183,6 +199,8 @@
         window.onload = () => {
             inicializarMapa();
             cargarAniosDisponibles();
+            // Selecciona el primer año por defecto
+            document.getElementById('yearSelect').value = 2018;
             cargarMapa();
         };
     </script>
