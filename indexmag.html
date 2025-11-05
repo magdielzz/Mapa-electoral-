@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Votaciones Dinámico</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 600px; width: 100%; }
+        .controls { margin: 10px; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+        .legend { background: white; padding: 10px; font-size: 12px; line-height: 18px; color: #555; }
+        .chart-container { position: absolute; bottom: 10px; left: 10px; z-index: 999; background: white; padding: 10px; border-radius: 10px; box-shadow: 0 0 8px rgba(0,0,0,0.2); max-width: 380px; }
+        canvas { max-width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <label for="yearSelect">Año:</label>
+        <select id="yearSelect" onchange="cargarMapa()"></select>
+        <label for="seccionSelect">Sección:</label>
+        <select id="seccionSelect" onchange="filtrarPorSeccion()"></select>
+        <label for="municipioSelect">Municipio:</label>
+        <select id="municipioSelect" onchange="filtrarPorMunicipio()"></select>
+    </div>
+    <div id="map"></div>
+    <div class="chart-container">
+        <canvas id="graficaPastel" width="300" height="200"></canvas>
+        <canvas id="graficaParticipacion" width="300" height="150"></canvas>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        let mapa = null;
+        let capaGeojson = null;
+        let datosGeoJSON = null;
+        let chartPastel = null;
+        let chartParticipacion = null;
+
+        const coloresPartidos = {
+            'PAN': '#FF5733', 'PRI': '#1E90FF', 'PRD': '#FFD700',
+            'PT': '#32CD32', 'PVEM': '#228B22', 'MC': '#FF69B4',
+            'MORENA': '#8A2BE2', 'OTROS': '#D3D3D3',
+            'CANDIDATOS_INDEPENDIENTES': '#FFA500', 'N/A': '#FFFFFF'
+        };
+
+        function inicializarMapa() {
+            mapa = L.map('map').setView([19.5, -99.5], 8);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(mapa);
+        }
+
+        function getGanador(props) {
+            return {
+                ganador: props['PARTIDO_GANADOR'] || 'N/A',
+                porcentaje: props[`PORCENTAJE_${props['PARTIDO_GANADOR']}`] || 0,
+                votos: props['VOTOS_PARTIDO_GANADOR'] || 0
+            };
+        }
+
+        function crearContenidoPopup(props) {
+            const { ganador, porcentaje, votos } = getGanador(props);
+            return `
+                <strong>Sección:</strong> ${props.SECCION || 'N/A'}<br>
+                <strong>Municipio:</strong> ${props.MUNICIPIO || 'Desconocido'}<br>
+                <strong>Año:</strong> ${props.AÑO || 'N/A'}<br>
+                <strong>Ganador:</strong> ${ganador} (${porcentaje}%)<br>
+                <strong>Votos del ganador:</strong> ${votos}<br>
+                <strong>Votos válidos:</strong> ${props.NUM_VOTOS_VALIDOS || 0}<br>
+                <strong>Votos nulos:</strong> ${props.NUM_VOTOS_NULOS || 0}<br>
+                <strong>Total de votos:</strong> ${props.TOTAL_VOTOS || 0}<br>
+                <strong>Lista nominal:</strong> ${props.LISTA_NOMINAL || 0}<br>
+                <strong>Participación:</strong> ${props.PARTICIPACION || 0}%
+            `;
+        }
+
+        function mostrarGraficas(props) {
+            const porcentajes = Object.entries(props).filter(([clave]) => clave.startsWith("PORCENTAJE_")).map(([clave, valor]) => {
+                const partido = clave.replace("PORCENTAJE_", "");
+                return { partido, valor };
+            }).filter(p => p.valor > 0);
+
+            const labels = porcentajes.map(p => p.partido);
+            const data = porcentajes.map(p => p.valor);
+            const bgColors = labels.map(p => coloresPartidos[p] || '#ccc');
+
+            if (chartPastel) chartPastel.destroy();
+            chartPastel = new Chart(document.getElementById('graficaPastel').getContext('2d'), {
+                type: 'pie', data: {
+                    labels, datasets: [{ data, backgroundColor: bgColors }]
+                }, options: {
+                    plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: ctx => `${ctx.label}: ${ctx.parsed}%` } } }
+                }
+            });
+
+            if (chartParticipacion) chartParticipacion.destroy();
+            chartParticipacion = new Chart(document.getElementById('graficaParticipacion').getContext('2d'), {
+                type: 'bar', data: {
+                    labels: ['Participación', 'Nulos', 'Total Votos'],
+                    datasets: [{
+                        label: 'Datos de participación',
+                        data: [props.PARTICIPACION || 0, props.NUM_VOTOS_NULOS || 0, props.TOTAL_VOTOS || 0],
+                        backgroundColor: ['#4caf50', '#f44336', '#2196f3']
+                    }]
+                },
+                options: {
+                    responsive: true, plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        }
+
+        function filtrarPorSeccion() {
+            const seccion = document.getElementById("seccionSelect").value;
+            if (!datosGeoJSON) return;
+
+            const featuresFiltradas = datosGeoJSON.features.filter(f => f.properties.SECCION == seccion);
+            actualizarCapa(featuresFiltradas);
+        }
+
+        function filtrarPorMunicipio() {
+            const municipio = document.getElementById("municipioSelect").value;
+            if (!datosGeoJSON) return;
+
+            const featuresFiltradas = datosGeoJSON.features.filter(f => f.properties.MUNICIPIO == municipio);
+            actualizarCapa(featuresFiltradas);
+        }
+
+        function actualizarSelects(features) {
+            const secciones = [...new Set(features.map(f => f.properties.SECCION))].sort();
+            const municipios = [...new Set(features.map(f => f.properties.MUNICIPIO))].sort();
+
+            const seccionSelect = document.getElementById('seccionSelect');
+            const municipioSelect = document.getElementById('municipioSelect');
+
+            seccionSelect.innerHTML = '<option value="">Todas</option>' +
+                secciones.map(s => `<option value="${s}">${s}</option>`).join('');
+
+            municipioSelect.innerHTML = '<option value="">Todos</option>' +
+                municipios.map(m => `<option value="${m}">${m}</option>`).join('');
+        }
+
+        function actualizarCapa(features) {
+            if (capaGeojson) mapa.removeLayer(capaGeojson);
+
+            capaGeojson = L.geoJSON({ type: "FeatureCollection", features }, {
+                style: feature => {
+                    const { ganador } = getGanador(feature.properties);
+                    return {
+                        fillColor: coloresPartidos[ganador] || '#FFFFFF',
+                        weight: 1, opacity: 1, color: 'white', fillOpacity: 0.7
+                    };
+                },
+                onEachFeature: (feature, layer) => {
+                    const props = feature.properties;
+                    layer.bindPopup(crearContenidoPopup(props));
+                    layer.on("click", () => mostrarGraficas(props));
+                }
+            }).addTo(mapa);
+
+            if (features.length > 0) mapa.fitBounds(capaGeojson.getBounds());
+        }
+
+        function cargarMapa() {
+            const año = document.getElementById('yearSelect').value;
+            fetch(`mexico_votacion_${año}.geojson`)
+                .then(res => res.json())
+                .then(data => {
+                    datosGeoJSON = data;
+                    actualizarSelects(data.features);
+                    actualizarCapa(data.features);
+                })
+                .catch(err => console.error("Error cargando el GeoJSON:", err));
+        }
+
+        function cargarAniosDisponibles() {
+            const yearSelect = document.getElementById("yearSelect");
+            const anios = [2018, 2021, 2024];
+            yearSelect.innerHTML = anios.map(y => `<option value="${y}">${y}</option>`).join("");
+        }
+
+        window.onload = () => {
+            inicializarMapa();
+            cargarAniosDisponibles();
+            cargarMapa();
+        };
+    </script>
+</body>
+</html>
